@@ -378,6 +378,10 @@ class CalendarEngine:
     ) -> datetime:
         """Calculate when an activity finishes given start time and work hours.
 
+        All durations are in hours. Uses bulk week-skipping: divides remaining
+        hours by hours-per-week to jump forward many weeks at once, using
+        bisect to find the next exception boundary in O(log n).
+
         Args:
             calendar_id: The calendar to use.
             start_datetime: When the activity starts.
@@ -391,7 +395,78 @@ class CalendarEngine:
 
         remaining = work_hours
         current = self.next_work_start(calendar_id, start_datetime)
+        cal = self.get_calendar(calendar_id)
 
+        # Precompute weekly hours from the standard schedule
+        weekly_hours = sum(s.total_hours for s in cal.week_schedule)
+
+        # Sorted exception dates for bisect lookup
+        exc_dates = sorted(cal.exceptions.keys()) if cal.exceptions else []
+
+        # Bulk week-skip when remaining hours span many weeks
+        if weekly_hours > 0 and remaining > weekly_hours * 2:
+            # Consume partial first week day-by-day to align to Monday
+            days_until_monday = (7 - current.weekday()) % 7
+            for _ in range(days_until_monday):
+                remaining = self._consume_day_hours(cal, current, remaining)
+                if remaining <= 0:
+                    return self._finish_in_day(
+                        cal, current,
+                        remaining + self._day_available(cal, current),
+                    )
+                current = self._advance_to_next_workday(calendar_id, current)
+
+            # Now on a Monday — bulk skip using bisect
+            import bisect
+
+            while remaining > weekly_hours + 1e-9:
+                # How many clean weeks can we skip?
+                max_weeks = int(remaining / weekly_hours)
+                if max_weeks < 1:
+                    break
+
+                skip_end = datetime(
+                    current.year, current.month, current.day
+                ) + timedelta(weeks=max_weeks)
+
+                # Use bisect to find if any exception falls in [current, skip_end)
+                idx = bisect.bisect_left(exc_dates, current)
+                if idx < len(exc_dates) and exc_dates[idx] < skip_end:
+                    # Exception found — only skip up to the week containing it
+                    exc_dt = exc_dates[idx]
+                    # Align to the Monday before the exception
+                    days_to_exc_monday = (exc_dt - current).days
+                    safe_weeks = days_to_exc_monday // 7
+                    if safe_weeks > 0:
+                        remaining -= weekly_hours * safe_weeks
+                        current = datetime(
+                            current.year, current.month, current.day
+                        ) + timedelta(weeks=safe_weeks)
+                        current = self.next_work_start(calendar_id, current)
+                    # Process the exception week day-by-day
+                    for _ in range(7):
+                        if remaining <= 0:
+                            break
+                        remaining = self._consume_day_hours(
+                            cal, current, remaining
+                        )
+                        if remaining <= 0:
+                            return self._finish_in_day(
+                                cal, current,
+                                remaining + self._day_available(cal, current),
+                            )
+                        current = self._advance_to_next_workday(
+                            calendar_id, current
+                        )
+                else:
+                    # No exceptions in range — skip all weeks at once
+                    remaining -= weekly_hours * max_weeks
+                    current = datetime(
+                        current.year, current.month, current.day
+                    ) + timedelta(weeks=max_weeks)
+                    current = self.next_work_start(calendar_id, current)
+
+        # Day-by-day for the remaining hours (typically < 2 weeks)
         for _ in range(10000):  # Safety limit
             schedule = self._get_day_schedule(calendar_id, current)
             t = current.time()
@@ -400,7 +475,6 @@ class CalendarEngine:
                 if t >= period.finish:
                     continue
 
-                # Start within or before this period
                 effective_start = max(t, period.start)
                 available = (
                     (period.finish.hour + period.finish.minute / 60)
@@ -408,7 +482,6 @@ class CalendarEngine:
                 )
 
                 if remaining <= available + 1e-9:
-                    # Finish within this period
                     finish_minutes = (
                         effective_start.hour * 60
                         + effective_start.minute
@@ -425,14 +498,63 @@ class CalendarEngine:
 
                 remaining -= available
 
-            # Move to next day
             next_day = datetime.combine(
                 current.date() + timedelta(days=1), time(0, 0)
             )
             current = self.next_work_start(calendar_id, next_day)
 
-        # Fallback
         return current
+
+    def _day_available(self, cal: CalendarDefinition, dt: datetime) -> float:
+        """Total available work hours for a given date."""
+        date_key = datetime(dt.year, dt.month, dt.day)
+        if date_key in cal.exceptions:
+            return cal.exceptions[date_key].total_hours
+        return cal.week_schedule[dt.weekday()].total_hours
+
+    def _consume_day_hours(
+        self, cal: CalendarDefinition, dt: datetime, remaining: float
+    ) -> float:
+        """Subtract a full day's work hours from remaining. Returns new remaining."""
+        return remaining - self._day_available(cal, dt)
+
+    def _advance_to_next_workday(self, calendar_id: int, current: datetime) -> datetime:
+        """Advance to the start of the next work day."""
+        next_day = datetime.combine(
+            current.date() + timedelta(days=1), time(0, 0)
+        )
+        return self.next_work_start(calendar_id, next_day)
+
+    def _finish_in_day(
+        self, cal: CalendarDefinition, dt: datetime, work_hours: float
+    ) -> datetime:
+        """Find the exact finish time within a day for the given work hours."""
+        date_key = datetime(dt.year, dt.month, dt.day)
+        if date_key in cal.exceptions:
+            schedule = cal.exceptions[date_key]
+        else:
+            schedule = cal.week_schedule[dt.weekday()]
+
+        consumed = 0.0
+        for period in schedule.periods:
+            available = period.hours
+            if consumed + available >= work_hours - 1e-9:
+                # Finish in this period
+                hours_in_period = work_hours - consumed
+                finish_minutes = (
+                    period.start.hour * 60
+                    + period.start.minute
+                    + hours_in_period * 60
+                )
+                finish_hour = int(finish_minutes // 60)
+                finish_min = int(round(finish_minutes % 60))
+                if finish_min == 60:
+                    finish_hour += 1
+                    finish_min = 0
+                return datetime.combine(dt.date(), time(finish_hour, finish_min))
+            consumed += available
+
+        return dt
 
     def calculate_work_hours_between(
         self, calendar_id: int, start_datetime: datetime, end_datetime: datetime
