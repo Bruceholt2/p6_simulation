@@ -31,6 +31,7 @@ def save_results_csv(result: "SimulationResult", filepath: Path) -> None:
     # Reorder columns for readability
     col_order = [
         "task_id",
+        "proj_id",
         "task_code",
         "task_name",
         "planned_duration_hours",

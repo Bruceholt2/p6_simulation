@@ -57,6 +57,7 @@ class ActivityResult:
 
     Attributes:
         task_id: Activity identifier.
+        proj_id: Project identifier.
         task_code: User-visible activity code.
         task_name: Activity description.
         planned_duration_hours: Original planned duration.
@@ -70,6 +71,7 @@ class ActivityResult:
     """
 
     task_id: int
+    proj_id: int
     task_code: str
     task_name: str
     planned_duration_hours: float
@@ -111,6 +113,7 @@ class SimulationResult:
         for r in self.activity_results.values():
             records.append({
                 "task_id": r.task_id,
+                "proj_id": r.proj_id,
                 "task_code": r.task_code,
                 "task_name": r.task_name,
                 "planned_duration_hours": r.planned_duration_hours,
@@ -264,6 +267,13 @@ class SimulationEngine:
         else:
             self._project_start = self._infer_project_start()
 
+        # Build task_id -> proj_id lookup
+        tasks = self._parser.tasks
+        self._proj_ids: dict[int, int] = {}
+        if "proj_id" in tasks.columns:
+            for _, row in tasks.iterrows():
+                self._proj_ids[int(row["task_id"])] = int(row["proj_id"])
+
         # Build resource pools
         self._resource_pools: dict[int, ResourcePool] = {}
         self._resource_assignments: dict[int, list[int]] = {}  # task_id -> [rsrc_id]
@@ -409,6 +419,7 @@ class SimulationEngine:
 
             result.activity_results[activity.task_id] = ActivityResult(
                 task_id=activity.task_id,
+                proj_id=self._proj_ids.get(activity.task_id, 0),
                 task_code=activity.task_code,
                 task_name=activity.task_name,
                 planned_duration_hours=activity.remaining_duration_hours,
@@ -508,6 +519,7 @@ class SimulationEngine:
 
             result.activity_results[activity.task_id] = ActivityResult(
                 task_id=activity.task_id,
+                proj_id=self._proj_ids.get(activity.task_id, 0),
                 task_code=activity.task_code,
                 task_name=activity.task_name,
                 planned_duration_hours=activity.remaining_duration_hours,

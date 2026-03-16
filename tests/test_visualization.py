@@ -334,7 +334,7 @@ class TestResourceUtilization:
     def test_no_assignments_shows_message(self) -> None:
         empty = SimulationResult(run_id=0)
         empty.activity_results[1] = ActivityResult(
-            task_id=1, task_code="A", task_name="Test",
+            task_id=1, proj_id=100, task_code="A", task_name="Test",
             planned_duration_hours=8, simulated_duration_hours=8,
             sim_start_time=0, sim_finish_time=8,
         )
