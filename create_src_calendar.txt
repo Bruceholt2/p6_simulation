@@ -1,0 +1,16 @@
+"Create src/calendar_engine.py with a CalendarEngine class. This is critical for the DES because we need to convert between work hours and calendar time. Requirements:
+
+Parse the P6 calendar clndr_data field. This is a structured string that encodes standard work hours per day of the week (Monday through Sunday) and exception dates (holidays, non-work days, extra work days). The format uses a pipe-separated structure with day patterns and exceptions.
+Provide these methods:
+
+is_work_time(calendar_id, datetime) -> bool: is this a working moment?
+get_work_hours_per_day(calendar_id, day_of_week) -> float: standard hours for that weekday
+next_work_start(calendar_id, datetime) -> datetime: when does the next work period begin?
+calculate_finish(calendar_id, start_datetime, work_hours) -> datetime: given a start time and work hours remaining, when does the activity finish?
+calculate_work_hours_between(calendar_id, start_datetime, end_datetime) -> float: how many work hours between two datetimes?
+
+
+Handle edge cases: starting on a non-work day, starting mid-day, holidays, zero-duration milestones
+Default to a standard 5-day, 8-hour calendar (Mon-Fri, 8am-5pm with 1hr lunch) if a calendar can't be parsed
+
+Write thorough tests. Test that a 40-hour task starting Friday at 2pm finishes the following Friday at 2pm (skipping the weekend). Test that holidays are skipped. Test that starting on a Saturday rolls to Monday morning."
