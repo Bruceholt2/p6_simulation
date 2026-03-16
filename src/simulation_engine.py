@@ -386,7 +386,7 @@ class SimulationEngine:
             # Compute earliest start from all predecessors
             earliest = 0.0
             for rel in activity.predecessors:
-                dur = activity.original_duration_hours
+                dur = activity.remaining_duration_hours
                 constraint = _compute_earliest_start(
                     rel, activity_starts, activity_finishes, dur
                 )
@@ -395,9 +395,9 @@ class SimulationEngine:
 
             start_time = earliest
 
-            # Sample duration
+            # Sample duration based on remaining duration (for in-progress schedules)
             simulated_duration = self._duration_sampler(
-                activity.original_duration_hours, rng
+                activity.remaining_duration_hours, rng
             )
             if activity.is_milestone:
                 simulated_duration = 0.0
@@ -411,7 +411,7 @@ class SimulationEngine:
                 task_id=activity.task_id,
                 task_code=activity.task_code,
                 task_name=activity.task_name,
-                planned_duration_hours=activity.original_duration_hours,
+                planned_duration_hours=activity.remaining_duration_hours,
                 simulated_duration_hours=simulated_duration,
                 sim_start=start_time,
                 sim_finish=finish_time,
@@ -470,14 +470,14 @@ class SimulationEngine:
                     yield pred_event
                     earliest = _compute_earliest_start(
                         rel, activity_starts, activity_finishes,
-                        activity.original_duration_hours,
+                        activity.remaining_duration_hours,
                     )
                     if earliest > env.now:
                         yield env.timeout(earliest - env.now)
 
-            # Sample duration
+            # Sample duration based on remaining duration (for in-progress schedules)
             simulated_duration = self._duration_sampler(
-                activity.original_duration_hours, rng
+                activity.remaining_duration_hours, rng
             )
             if activity.is_milestone:
                 simulated_duration = 0.0
@@ -510,7 +510,7 @@ class SimulationEngine:
                 task_id=activity.task_id,
                 task_code=activity.task_code,
                 task_name=activity.task_name,
-                planned_duration_hours=activity.original_duration_hours,
+                planned_duration_hours=activity.remaining_duration_hours,
                 simulated_duration_hours=simulated_duration,
                 sim_start=start_time,
                 sim_finish=finish_time,
