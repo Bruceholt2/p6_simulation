@@ -34,8 +34,8 @@ Constructs a directed dependency graph from parsed XER schedule data. Activities
 | `task_name` | `str` | Activity description |
 | `task_type` | `TaskType` | Task, milestone, etc. |
 | `status` | `StatusCode` | Not started, active, complete |
-| `original_duration_hours` | `float` | Planned duration |
-| `remaining_duration_hours` | `float` | Remaining duration |
+| `original_duration_hours` | `float` | Planned duration (from `target_drtn_hr_cnt` or `orig_dur_hr_cnt`) |
+| `remaining_duration_hours` | `float` | Remaining duration (from `remain_drtn_hr_cnt` or `remain_dur_hr_cnt`) |
 | `calendar_id` | `int \| None` | Assigned calendar |
 | `early_start/finish` | `Timestamp \| None` | CPM early dates |
 | `late_start/finish` | `Timestamp \| None` | CPM late dates |
@@ -43,7 +43,7 @@ Constructs a directed dependency graph from parsed XER schedule data. Activities
 | `predecessors` | `list[Relationship]` | Incoming relationships |
 | `successors` | `list[Relationship]` | Outgoing relationships |
 
-**Properties:** `is_milestone` (bool), `is_critical` (bool — total float near zero)
+**Properties:** `is_milestone` (bool), `is_critical` (bool -- total float near zero)
 
 ## Class: ActivityNetwork
 
@@ -53,7 +53,7 @@ Constructs a directed dependency graph from parsed XER schedule data. Activities
 ActivityNetwork(parser: XERParser)
 ```
 
-Builds the network automatically from the parser's TASK and TASKPRED tables.
+Builds the network automatically from the parser's TASK and TASKPRED tables. Also accepts a `PortfolioLoader` since it exposes the same `tasks` and `predecessors` properties.
 
 ### Methods
 
@@ -66,7 +66,7 @@ Builds the network automatically from the parser's TASK and TASKPRED tables.
 | `successors_of(task_id)` | `list[Activity]` | All successor activities. |
 | `topological_order()` | `list[Activity]` | Kahn's algorithm. Raises `ValueError` on cycles. |
 | `critical_path()` | `list[Activity]` | Zero-float activities in topological order. |
-| `summary()` | `str` | Prints network statistics. |
+| `summary()` | `str` | Prints network statistics (counts by relationship type and activity type). |
 
 ### Properties
 
@@ -75,6 +75,11 @@ Builds the network automatically from the parser's TASK and TASKPRED tables.
 | `activities` | `dict[int, Activity]` | All activities keyed by task_id. |
 | `num_activities` | `int` | Total activity count. |
 | `num_relationships` | `int` | Total relationship count. |
+
+### Internal Details
+
+- `_load_activities()` auto-detects duration column names (`target_drtn_hr_cnt` vs `orig_dur_hr_cnt`, `remain_drtn_hr_cnt` vs `remain_dur_hr_cnt`) to handle both real XER exports and simplified test fixtures.
+- Relationships referencing activities not in the network are silently skipped.
 
 ### Usage
 
@@ -92,4 +97,4 @@ for activity in network.critical_path():
 
 ## Tests
 
-See `tests/test_activity_network.py` — 27 tests covering construction, relationships, topological ordering, critical path, summary, and real XER data.
+See `tests/test_activity_network.py` -- tests covering construction, relationships, topological ordering, critical path, summary, and real XER data.

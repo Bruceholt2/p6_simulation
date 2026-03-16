@@ -17,7 +17,7 @@ A single work window within a day (e.g., 08:00-12:00).
 | `start` | `time` | Period start time |
 | `finish` | `time` | Period end time |
 
-**Property:** `hours` (float) — duration of the period.
+**Property:** `hours` (float) -- duration of the period.
 
 ### DaySchedule
 
@@ -27,7 +27,7 @@ Work schedule for a single day.
 |-------|------|-------------|
 | `periods` | `list[WorkPeriod]` | Ordered work periods. Empty = non-work day. |
 
-**Properties:** `is_workday` (bool), `total_hours` (float), `earliest_start` (time), `latest_finish` (time).
+**Properties:** `is_workday` (bool), `total_hours` (float), `earliest_start` (time | None), `latest_finish` (time | None).
 
 ### CalendarDefinition
 
@@ -46,19 +46,39 @@ Work schedule for a single day.
 CalendarEngine(parser: XERParser)
 ```
 
-Parses all calendars from the CALENDAR table. Falls back to a default 5-day, 8-hour calendar (Mon-Fri, 08:00-12:00, 13:00-17:00) if parsing fails.
+Parses all calendars from the CALENDAR table. Falls back to a default 5-day, 8-hour calendar (Mon-Fri, 08:00-12:00, 13:00-17:00) if parsing fails. Also accepts a `PortfolioLoader` since it exposes the same `calendars` property.
 
 ### Methods
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `get_calendar` | `(calendar_id) → CalendarDefinition` | Returns calendar definition or the default. |
-| `is_work_time` | `(calendar_id, datetime) → bool` | Is this datetime during a work period? |
-| `get_work_hours_per_day` | `(calendar_id, day_of_week) → float` | Standard hours for a weekday (0=Mon, 6=Sun). |
-| `next_work_start` | `(calendar_id, datetime) → datetime` | When does the next work period begin? |
-| `calculate_finish` | `(calendar_id, start, work_hours) → datetime` | When does an activity finish? |
-| `calculate_work_hours_between` | `(calendar_id, start, end) → float` | Work hours between two datetimes. |
-| `summary` | `() → str` | Prints all loaded calendars with work patterns. |
+| `get_calendar` | `(calendar_id) -> CalendarDefinition` | Returns calendar definition or the default. |
+| `is_work_time` | `(calendar_id, datetime) -> bool` | Is this datetime during a work period? |
+| `get_work_hours_per_day` | `(calendar_id, day_of_week) -> float` | Standard hours for a weekday (0=Mon, 6=Sun). |
+| `next_work_start` | `(calendar_id, datetime) -> datetime` | When does the next work period begin? |
+| `calculate_finish` | `(calendar_id, start, work_hours) -> datetime` | When does an activity finish? Uses bulk week-skipping with `bisect` for performance. |
+| `calculate_work_hours_between` | `(calendar_id, start, end) -> float` | Work hours between two datetimes. |
+| `summary` | `() -> str` | Prints all loaded calendars with work patterns. |
+
+### calculate_finish -- Bulk Week-Skipping Optimization
+
+`calculate_finish` uses an optimized algorithm for large durations:
+
+1. If `remaining > weekly_hours * 2`, it first consumes a partial week day-by-day to align to Monday.
+2. Then it bulk-skips full weeks at once, dividing remaining hours by hours-per-week.
+3. It uses `bisect.bisect_left` on sorted exception dates to check for exceptions in the skip range in O(log n).
+4. If an exception falls within the skip range, it only skips up to that exception's week and processes the exception week day-by-day.
+5. For the remaining hours (typically less than 2 weeks), it reverts to day-by-day processing.
+
+### Private Helper Methods
+
+| Method | Description |
+|--------|-------------|
+| `_get_day_schedule(calendar_id, dt)` | Returns the effective DaySchedule, checking exceptions first. |
+| `_day_available(cal, dt)` | Total available work hours for a given date. |
+| `_consume_day_hours(cal, dt, remaining)` | Subtracts a full day's work hours from remaining. |
+| `_advance_to_next_workday(calendar_id, current)` | Advances to start of next work day. |
+| `_finish_in_day(cal, dt, work_hours)` | Finds exact finish time within a day. |
 
 ### Calendar Data Parsing
 
@@ -86,4 +106,4 @@ print(f"Finish: {finish}")  # Next Friday 2pm (skips weekend)
 
 ## Tests
 
-See `tests/test_calendar_engine.py` — 45 tests covering work periods, day schedules, serial date conversion, calendar parsing, work time checks, next work start, calculate finish (weekends, holidays, lunch breaks, milestones), work hours between, and real XER data.
+See `tests/test_calendar_engine.py` -- tests covering work periods, day schedules, serial date conversion, calendar parsing, work time checks, next work start, calculate finish (weekends, holidays, lunch breaks, milestones), work hours between, and real XER data.

@@ -41,9 +41,16 @@ XERParser(file_path: str | Path)
 
 The parser automatically converts columns based on naming patterns:
 
-- **Date columns** (`*_date`, `*_date2`, etc.) → `datetime64`
-- **Numeric columns** (`*_hr_cnt`, `*_qty`, `*_pct`, `*_cost`, `*_per_hr`) → `float64`
-- **ID columns** (`*_id`, excluding `guid`/`tmpl_guid`) → nullable `Int64`
+- **Date columns** (`*_date`, `*_date2`, etc.) -- `datetime64` (format `%Y-%m-%d %H:%M`)
+- **Numeric columns** (`*_hr_cnt`, `*_qty`, `*_pct`, `*_cost`, `*_cnt`, `*_per_hr`) -- `float64`
+- **Exact-name numeric columns** (`cost_per_qty`, `base_exch_rate`, `ann_dscnt_rate_pct`) -- `float64`
+- **ID columns** (`*_id`, excluding `guid`/`tmpl_guid`) -- nullable `Int64`
+
+### Internal Details
+
+- `_parse()` iterates line-by-line, recognizing `%T` (table name), `%F` (field names), `%R` (row data), and `%E` (end-of-file) markers.
+- `_store_table()` pads or trims rows to match the field count, strips whitespace, and applies type conversions.
+- Handles files missing the `%E` end marker gracefully.
 
 ### Usage
 
@@ -59,4 +66,4 @@ print(tasks[["task_id", "task_code", "task_name"]].head())
 
 ## Tests
 
-See `tests/test_xer_parser.py` — 22 tests covering table extraction, data type conversions, convenience properties, relationship data, and summary output.
+See `tests/test_xer_parser.py` -- tests covering table extraction, data type conversions, convenience properties, relationship data, and summary output.

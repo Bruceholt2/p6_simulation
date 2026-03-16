@@ -4,7 +4,9 @@
 
 ## Purpose
 
-Generates publication-quality charts from simulation results using matplotlib. All functions return a `plt.Figure` object and optionally save to a file.
+Generates publication-quality charts from simulation results using matplotlib. All functions return a `plt.Figure` object and optionally save to a file. Every function calls `plt.close(fig)` before returning to prevent memory leaks in batch/server use.
+
+Uses the `Agg` (non-interactive) matplotlib backend for file output without requiring a display.
 
 ## Functions
 
@@ -19,10 +21,10 @@ gantt_chart(
     title: str = "...",
     figsize: tuple = (14, 8),
     save_path: str | Path = None,
-) → plt.Figure
+) -> plt.Figure
 ```
 
-Horizontal bar chart of activity durations. Critical activities in red, non-critical in blue. Resource wait time shown in orange (sim-hours mode only).
+Horizontal bar chart of activity durations. Critical activities in red, non-critical in blue. Resource wait time shown in orange (sim-hours mode only). Activity labels are truncated to 40 characters.
 
 ### duration_histogram
 
@@ -34,10 +36,10 @@ duration_histogram(
     title: str = "...",
     figsize: tuple = (10, 6),
     save_path: str | Path = None,
-) → plt.Figure
+) -> plt.Figure
 ```
 
-Histogram of project durations from Monte Carlo runs. Vertical lines mark percentiles (color-coded) and the mean (black).
+Histogram of project durations from Monte Carlo runs. Vertical lines mark percentiles (color-coded green/yellow/orange/red) and the mean (black).
 
 ### s_curve
 
@@ -48,7 +50,7 @@ s_curve(
     title: str = "...",
     figsize: tuple = (10, 6),
     save_path: str | Path = None,
-) → plt.Figure
+) -> plt.Figure
 ```
 
 Cumulative work hours over simulation time. Shows proportional completion for in-progress activities. Horizontal reference line at total work hours.
@@ -58,13 +60,13 @@ Cumulative work hours over simulation time. Shows proportional completion for in
 ```python
 resource_utilization(
     result: SimulationResult,
-    resource_assignments: dict[int, list[int]],  # task_id → [rsrc_id]
-    resource_names: dict[int, str],               # rsrc_id → name
+    resource_assignments: dict[int, list[int]],  # task_id -> [rsrc_id]
+    resource_names: dict[int, str],               # rsrc_id -> name
     num_points: int = 200,
     title: str = "...",
     figsize: tuple = (12, 6),
     save_path: str | Path = None,
-) → plt.Figure
+) -> plt.Figure
 ```
 
 Stacked area chart showing concurrent resource units over the project timeline. One colored band per resource.
@@ -78,10 +80,14 @@ criticality_index(
     title: str = "...",
     figsize: tuple = (10, 8),
     save_path: str | Path = None,
-) → plt.Figure
+) -> plt.Figure
 ```
 
 Horizontal bar chart showing what percentage of Monte Carlo runs each activity was on the critical path. Color-coded: red (>=80%), orange (>=50%), blue (<50%).
+
+## Memory Management
+
+All five chart functions call `plt.close(fig)` after creating and optionally saving the figure. The returned `Figure` object is still usable for inspection but is detached from the matplotlib state machine, preventing memory leaks when generating many charts in a loop.
 
 ## Usage
 
@@ -102,4 +108,4 @@ criticality_index(results, save_path="results/criticality.png")
 
 ## Tests
 
-See `tests/test_visualization.py` — 26 tests covering figure creation, bar counts, top_n limiting, file save, S-curve monotonicity, empty/edge cases, and real XER data integration.
+See `tests/test_visualization.py` -- tests covering figure creation, bar counts, top_n limiting, file save, S-curve monotonicity, empty/edge cases, and real XER data integration.
