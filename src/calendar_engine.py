@@ -254,6 +254,86 @@ def _default_calendar() -> CalendarDefinition:
     )
 
 
+def _intersect_periods(a: list[WorkPeriod], b: list[WorkPeriod]) -> list[WorkPeriod]:
+    """Return the intersection of two lists of work periods.
+
+    Only time ranges present in BOTH lists are kept.
+    """
+    result: list[WorkPeriod] = []
+    for pa in a:
+        for pb in b:
+            start = max(pa.start, pb.start)
+            finish = min(pa.finish, pb.finish)
+            if start < finish:
+                result.append(WorkPeriod(start=start, finish=finish))
+    result.sort(key=lambda p: p.start)
+    return result
+
+
+def _intersect_day_schedules(a: DaySchedule, b: DaySchedule) -> DaySchedule:
+    """Return a DaySchedule with only the overlapping work periods."""
+    return DaySchedule(periods=_intersect_periods(a.periods, b.periods))
+
+
+def intersect_calendars(calendars: list[CalendarDefinition]) -> CalendarDefinition:
+    """Create a new calendar from the intersection of multiple calendars.
+
+    The resulting calendar only has work periods where ALL input calendars
+    have work periods. Exceptions from all calendars are merged — if any
+    calendar has a non-work exception on a date, that date is non-work
+    in the intersection.
+
+    Args:
+        calendars: List of CalendarDefinition objects to intersect.
+
+    Returns:
+        A new CalendarDefinition representing the intersection.
+    """
+    if not calendars:
+        return CalendarDefinition(calendar_id=-1, name="Empty Intersection")
+    if len(calendars) == 1:
+        return calendars[0]
+
+    # Intersect weekly schedules
+    week = list(calendars[0].week_schedule)
+    for cal in calendars[1:]:
+        week = [
+            _intersect_day_schedules(week[d], cal.week_schedule[d])
+            for d in range(7)
+        ]
+
+    # Merge all exceptions — union of exception dates
+    # For each exception date, intersect the effective schedules from all calendars
+    all_exc_dates: set[datetime] = set()
+    for cal in calendars:
+        all_exc_dates.update(cal.exceptions.keys())
+
+    exceptions: dict[datetime, DaySchedule] = {}
+    for exc_date in all_exc_dates:
+        # Get effective schedule for this date from each calendar
+        day_schedules = []
+        for cal in calendars:
+            if exc_date in cal.exceptions:
+                day_schedules.append(cal.exceptions[exc_date])
+            else:
+                # No exception — use the standard weekly schedule
+                day_schedules.append(cal.week_schedule[exc_date.weekday()])
+
+        # Intersect all day schedules for this date
+        intersected = day_schedules[0]
+        for ds in day_schedules[1:]:
+            intersected = _intersect_day_schedules(intersected, ds)
+        exceptions[exc_date] = intersected
+
+    cal_ids = [c.calendar_id for c in calendars]
+    return CalendarDefinition(
+        calendar_id=-1,
+        name=f"Intersection({','.join(str(i) for i in cal_ids)})",
+        week_schedule=week,
+        exceptions=exceptions,
+    )
+
+
 class CalendarEngine:
     """Engine for calendar-aware time calculations.
 
@@ -267,6 +347,7 @@ class CalendarEngine:
     def __init__(self, parser: XERParser) -> None:
         self._calendars: dict[int, CalendarDefinition] = {}
         self._default = _default_calendar()
+        self._intersection_cache: dict[tuple[int, ...], CalendarDefinition] = {}
         self._load_calendars(parser)
 
     def _load_calendars(self, parser: XERParser) -> None:
@@ -299,6 +380,37 @@ class CalendarEngine:
     def get_calendar(self, calendar_id: int) -> CalendarDefinition:
         """Return the CalendarDefinition for a given ID, or the default."""
         return self._calendars.get(calendar_id, self._default)
+
+    def get_intersected_calendar(
+        self, calendar_ids: list[int]
+    ) -> CalendarDefinition:
+        """Return the intersection of multiple calendars, with caching.
+
+        Args:
+            calendar_ids: List of calendar IDs to intersect.
+
+        Returns:
+            A CalendarDefinition where only work periods common to ALL
+            calendars are retained.
+        """
+        # Deduplicate and sort for consistent cache keys
+        unique_ids = sorted(set(calendar_ids))
+        if len(unique_ids) == 0:
+            return self._default
+        if len(unique_ids) == 1:
+            return self.get_calendar(unique_ids[0])
+
+        cache_key = tuple(unique_ids)
+        if cache_key in self._intersection_cache:
+            return self._intersection_cache[cache_key]
+
+        cals = [self.get_calendar(cid) for cid in unique_ids]
+        intersected = intersect_calendars(cals)
+        # Assign a unique negative ID and register in the calendar store
+        intersected.calendar_id = -(len(self._intersection_cache) + 2)
+        self._calendars[intersected.calendar_id] = intersected
+        self._intersection_cache[cache_key] = intersected
+        return intersected
 
     def _get_day_schedule(self, calendar_id: int, dt: datetime) -> DaySchedule:
         """Get the effective DaySchedule for a specific date, considering exceptions."""

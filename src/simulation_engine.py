@@ -301,11 +301,11 @@ class SimulationEngine:
             for _, row in tasks.iterrows():
                 self._proj_ids[int(row["task_id"])] = int(row["proj_id"])
 
-        # Build resource pools
+        # Build resource pools and task calendar mappings
         self._resource_pools: dict[int, ResourcePool] = {}
         self._resource_assignments: dict[int, list[int]] = {}  # task_id -> [rsrc_id]
-        if resource_constrained:
-            self._build_resource_pools()
+        self._task_calendar_ids: dict[int, list[int]] = {}  # task_id -> [clndr_id]
+        self._build_resource_data()
 
         # Cache topological order — the network doesn't change between runs
         self._topo_order: list[Activity] = self._network.topological_order()
@@ -319,13 +319,17 @@ class SimulationEngine:
                 return valid.min().to_pydatetime()
         return datetime(2025, 1, 1, 8, 0)
 
-    def _build_resource_pools(self) -> None:
-        """Create resource pools from XER resource and rate data.
+    def _build_resource_data(self) -> None:
+        """Build resource pools, task assignments, and task calendar mappings.
 
-        Capacity priority:
+        Resource capacity priority:
         1. max_qty_per_hr from RSRCRATE with the latest start_date
         2. def_qty_per_hr from RSRC table
         3. Infinity (unlimited capacity)
+
+        Task calendar: intersection of all resource calendars assigned
+        to the task via TASKRSRC. Falls back to the activity's own
+        calendar_id if no resource assignments exist.
         """
         resources = self._parser.resources
         try:
@@ -380,13 +384,27 @@ class SimulationEngine:
                 capacity=int_capacity,
             )
 
-        # Build task -> resource assignments
+        # Build resource clndr_id lookup
+        rsrc_calendar: dict[int, int] = {}
+        if "clndr_id" in resources.columns:
+            for _, row in resources.iterrows():
+                rid = int(row["rsrc_id"])
+                cid = row.get("clndr_id")
+                if pd.notna(cid):
+                    rsrc_calendar[rid] = int(cid)
+
+        # Build task -> resource assignments and task -> resource calendar IDs
         assignments = self._parser.resource_assignments
         for _, row in assignments.iterrows():
             task_id = int(row["task_id"])
             rsrc_id = int(row["rsrc_id"])
             if rsrc_id in self._resource_pools:
                 self._resource_assignments.setdefault(task_id, []).append(rsrc_id)
+            # Collect resource calendar for this task
+            if rsrc_id in rsrc_calendar:
+                self._task_calendar_ids.setdefault(task_id, []).append(
+                    rsrc_calendar[rsrc_id]
+                )
 
     @property
     def network(self) -> ActivityNetwork:
@@ -415,19 +433,55 @@ class SimulationEngine:
             cal_id, self._project_start, sim_hours
         )
 
+    def _get_task_calendar(self, task_id: int) -> int | None:
+        """Get the effective calendar for a task.
+
+        Uses the intersection of all resource calendars assigned to the task.
+        Falls back to the activity's own calendar_id if no resource
+        calendars are available.
+        """
+        rsrc_cal_ids = self._task_calendar_ids.get(task_id)
+        if rsrc_cal_ids:
+            # Get or create the intersected calendar and register it
+            intersected = self._calendar.get_intersected_calendar(rsrc_cal_ids)
+            return intersected.calendar_id
+        # Fall back to activity calendar
+        activity = self._network.activities.get(task_id)
+        if activity is not None:
+            return activity.calendar_id
+        return None
+
+    def _sim_hours_to_calendar_for_task(
+        self, sim_hours: float, task_id: int
+    ) -> datetime:
+        """Convert simulation hours to calendar datetime using the task's
+        effective calendar (intersection of resource calendars)."""
+        rsrc_cal_ids = self._task_calendar_ids.get(task_id)
+        if rsrc_cal_ids:
+            cal_def = self._calendar.get_intersected_calendar(rsrc_cal_ids)
+            # Use calculate_finish directly with the intersected calendar
+            return self._calendar.calculate_finish(
+                cal_def.calendar_id, self._project_start, sim_hours
+            )
+        # Fall back to activity calendar
+        activity = self._network.activities.get(task_id)
+        cal_id = activity.calendar_id if activity else None
+        return self._sim_hours_to_calendar(sim_hours, cal_id)
+
     def _convert_calendar_dates(self, result: SimulationResult) -> None:
         """Convert simulation hours to calendar datetimes for all activities.
 
+        Uses the intersection of all resource calendars assigned to each task.
+        Falls back to the activity's own calendar if no resources are assigned.
         Called once after a run completes, rather than during simulation.
         """
         for ar in result.activity_results.values():
-            cal_id = None
-            # Look up the activity's calendar from the network
-            activity = self._network.activities.get(ar.task_id)
-            if activity is not None:
-                cal_id = activity.calendar_id
-            ar.sim_start_date = self._sim_hours_to_calendar(ar.sim_start_time, cal_id)
-            ar.sim_finish_date = self._sim_hours_to_calendar(ar.sim_finish_time, cal_id)
+            ar.sim_start_date = self._sim_hours_to_calendar_for_task(
+                ar.sim_start_time, ar.task_id
+            )
+            ar.sim_finish_date = self._sim_hours_to_calendar_for_task(
+                ar.sim_finish_time, ar.task_id
+            )
 
         # Update project finish from the last activity
         if result.activity_results:
