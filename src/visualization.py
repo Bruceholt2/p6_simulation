@@ -54,6 +54,7 @@ def gantt_chart(
         ax.set_title(title)
         ax.text(0.5, 0.5, "No activities to display", ha="center", va="center",
                 transform=ax.transAxes)
+        plt.close(fig)
         return fig
 
     # Sort by start time, then by duration (longest first for visibility)
@@ -119,6 +120,7 @@ def gantt_chart(
     if save_path:
         fig.savefig(str(save_path), dpi=150, bbox_inches="tight")
 
+    plt.close(fig)
     return fig
 
 
@@ -179,6 +181,7 @@ def duration_histogram(
     if save_path:
         fig.savefig(str(save_path), dpi=150, bbox_inches="tight")
 
+    plt.close(fig)
     return fig
 
 
@@ -206,6 +209,7 @@ def s_curve(
     if df.empty:
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_title(title)
+        plt.close(fig)
         return fig
 
     max_time = df["sim_finish"].max()
@@ -252,6 +256,7 @@ def s_curve(
     if save_path:
         fig.savefig(str(save_path), dpi=150, bbox_inches="tight")
 
+    plt.close(fig)
     return fig
 
 
@@ -283,6 +288,7 @@ def resource_utilization(
     if df.empty:
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_title(title)
+        plt.close(fig)
         return fig
 
     max_time = df["sim_finish"].max()
@@ -302,6 +308,7 @@ def resource_utilization(
         ax.set_title(title)
         ax.text(0.5, 0.5, "No resource assignments", ha="center", va="center",
                 transform=ax.transAxes)
+        plt.close(fig)
         return fig
 
     # Calculate utilization per resource over time
@@ -338,6 +345,7 @@ def resource_utilization(
     if save_path:
         fig.savefig(str(save_path), dpi=150, bbox_inches="tight")
 
+    plt.close(fig)
     return fig
 
 
@@ -368,6 +376,7 @@ def criticality_index(
     if num_runs == 0:
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_title(title)
+        plt.close(fig)
         return fig
 
     # Count how often each activity is critical
@@ -389,6 +398,7 @@ def criticality_index(
         ax.set_title(title)
         ax.text(0.5, 0.5, "No critical activities found", ha="center",
                 va="center", transform=ax.transAxes)
+        plt.close(fig)
         return fig
 
     # Sort by criticality and take top N
@@ -429,4 +439,5 @@ def criticality_index(
     if save_path:
         fig.savefig(str(save_path), dpi=150, bbox_inches="tight")
 
+    plt.close(fig)
     return fig
