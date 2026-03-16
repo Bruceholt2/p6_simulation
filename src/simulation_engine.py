@@ -102,6 +102,33 @@ class SimulationResult:
     project_start: datetime | None = None
     project_finish: datetime | None = None
 
+    def filter_by_project(self, proj_id: int) -> "SimulationResult":
+        """Return a new SimulationResult containing only activities for a project.
+
+        Args:
+            proj_id: The project ID to filter by.
+
+        Returns:
+            A new SimulationResult with only the matching activities.
+        """
+        filtered = {
+            tid: ar
+            for tid, ar in self.activity_results.items()
+            if ar.proj_id == proj_id
+        }
+        result = SimulationResult(
+            run_id=self.run_id,
+            activity_results=filtered,
+            project_start=self.project_start,
+        )
+        if filtered:
+            result.project_duration_hours = max(
+                r.sim_finish_time for r in filtered.values()
+            )
+            last = max(filtered.values(), key=lambda r: r.sim_finish_time)
+            result.project_finish = last.sim_finish_date
+        return result
+
     def to_dataframe(self) -> pd.DataFrame:
         """Convert activity results to a DataFrame.
 

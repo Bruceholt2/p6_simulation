@@ -92,9 +92,27 @@ def main(data_dir: str = "data") -> None:
     save_results_csv(result, results_dir / "deterministic_results.csv")
     print(f"\n  Saved: {results_dir / 'deterministic_results.csv'}")
 
-    # Save Gantt chart
+    # Save portfolio Gantt chart
     gantt_chart(result, top_n=40, save_path=results_dir / "gantt_deterministic.png")
     print(f"  Saved: {results_dir / 'gantt_deterministic.png'}")
+
+    # Save per-project Gantt charts
+    proj_df = portfolio.project
+    for _, proj_row in proj_df.iterrows():
+        pid = int(proj_row["proj_id"])
+        pname = str(proj_row.get("proj_short_name", f"proj_{pid}"))
+        # Sanitize filename
+        safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in pname).strip()
+        proj_result = result.filter_by_project(pid)
+        if proj_result.activity_results:
+            fname = f"gantt_{safe_name}.png"
+            gantt_chart(
+                proj_result,
+                top_n=40,
+                title=f"Gantt Chart — {pname}",
+                save_path=results_dir / fname,
+            )
+            print(f"  Saved: {results_dir / fname} ({len(proj_result.activity_results)} activities)")
 
     # Save S-curve
     s_curve(result, save_path=results_dir / "scurve_deterministic.png")
