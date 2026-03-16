@@ -293,29 +293,60 @@ class SimulationEngine:
         return datetime(2025, 1, 1, 8, 0)
 
     def _build_resource_pools(self) -> None:
-        """Create resource pools from XER resource and rate data."""
+        """Create resource pools from XER resource and rate data.
+
+        Capacity priority:
+        1. max_qty_per_hr from RSRCRATE with the latest start_date
+        2. def_qty_per_hr from RSRC table
+        3. Infinity (unlimited capacity)
+        """
         resources = self._parser.resources
         try:
             rates = self._parser.get_table("RSRCRATE")
         except KeyError:
             rates = pd.DataFrame()
 
-        # Build capacity lookup from rates
-        capacity_map: dict[int, float] = {}
+        # Build capacity lookup from rates — use the latest start_date per resource
+        rate_capacity: dict[int, float] = {}
         if len(rates) > 0 and "max_qty_per_hr" in rates.columns:
-            for _, row in rates.iterrows():
+            # Sort by start_date descending so first occurrence per rsrc_id is latest
+            rate_df = rates.dropna(subset=["rsrc_id"]).copy()
+            if "start_date" in rate_df.columns:
+                rate_df = rate_df.sort_values("start_date", ascending=False)
+            for _, row in rate_df.iterrows():
                 rsrc_id = int(row["rsrc_id"])
-                cap = float(row.get("max_qty_per_hr", 1) or 1)
-                # Use the highest capacity if multiple rates exist
-                capacity_map[rsrc_id] = max(capacity_map.get(rsrc_id, 0), cap)
+                if rsrc_id not in rate_capacity:
+                    cap = row.get("max_qty_per_hr")
+                    if pd.notna(cap) and float(cap) > 0:
+                        rate_capacity[rsrc_id] = float(cap)
+
+        # Build def_qty_per_hr lookup from RSRC table
+        def_capacity: dict[int, float] = {}
+        if "def_qty_per_hr" in resources.columns:
+            for _, row in resources.iterrows():
+                rsrc_id = int(row["rsrc_id"])
+                val = row.get("def_qty_per_hr")
+                if pd.notna(val) and float(val) > 0:
+                    def_capacity[rsrc_id] = float(val)
 
         for _, row in resources.iterrows():
             rsrc_id = int(row["rsrc_id"])
             name = str(row.get("rsrc_name", f"Resource-{rsrc_id}"))
-            capacity = capacity_map.get(rsrc_id, 1.0)
-            # Convert capacity to integer units for SimPy Resource
-            # (SimPy uses integer capacity for Resource)
-            int_capacity = max(1, int(capacity))
+
+            # Priority: RSRCRATE latest -> RSRC def_qty_per_hr -> infinity
+            if rsrc_id in rate_capacity:
+                capacity = rate_capacity[rsrc_id]
+            elif rsrc_id in def_capacity:
+                capacity = def_capacity[rsrc_id]
+            else:
+                capacity = float("inf")
+
+            # SimPy Resource uses integer capacity; inf means no constraint
+            if capacity == float("inf"):
+                int_capacity = 999999
+            else:
+                int_capacity = max(1, int(capacity))
+
             self._resource_pools[rsrc_id] = ResourcePool(
                 rsrc_id=rsrc_id,
                 name=name,
