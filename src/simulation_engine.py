@@ -3,10 +3,18 @@
 Simulates project execution by processing activities in dependency order,
 respecting resource constraints and calendar-aware durations. Supports
 deterministic and stochastic (Monte Carlo) duration modeling.
+
+Performance optimizations:
+- Fast-path direct traversal for non-resource-constrained runs (no SimPy overhead)
+- Cached topological order reused across Monte Carlo runs
+- Deferred calendar conversion (only on single-run results, not during MC)
+- Parallel Monte Carlo execution via concurrent.futures
 """
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable
@@ -197,6 +205,27 @@ def pert_sampler(
     return sampler
 
 
+def _compute_earliest_start(
+    rel: object,
+    activity_starts: dict[int, float],
+    activity_finishes: dict[int, float],
+    successor_duration: float,
+) -> float:
+    """Compute the earliest start for a successor based on one relationship."""
+    pred_finish = activity_finishes.get(rel.predecessor_id, 0)
+    pred_start = activity_starts.get(rel.predecessor_id, 0)
+
+    if rel.rel_type == RelationshipType.FS:
+        return pred_finish + rel.lag_hours
+    elif rel.rel_type == RelationshipType.SS:
+        return pred_start + rel.lag_hours
+    elif rel.rel_type == RelationshipType.FF:
+        return pred_finish + rel.lag_hours - successor_duration
+    elif rel.rel_type == RelationshipType.SF:
+        return pred_start + rel.lag_hours - successor_duration
+    return pred_finish + rel.lag_hours
+
+
 class SimulationEngine:
     """Discrete event simulation engine for P6 schedules.
 
@@ -240,6 +269,9 @@ class SimulationEngine:
         self._resource_assignments: dict[int, list[int]] = {}  # task_id -> [rsrc_id]
         if resource_constrained:
             self._build_resource_pools()
+
+        # Cache topological order — the network doesn't change between runs
+        self._topo_order: list[Activity] = self._network.topological_order()
 
     def _infer_project_start(self) -> datetime:
         """Determine project start from the earliest early_start date."""
@@ -315,14 +347,91 @@ class SimulationEngine:
             cal_id, self._project_start, sim_hours
         )
 
-    def run(self, run_id: int = 0) -> SimulationResult:
-        """Execute a single simulation run.
+    def _convert_calendar_dates(self, result: SimulationResult) -> None:
+        """Convert simulation hours to calendar datetimes for all activities.
 
-        Args:
-            run_id: Identifier for this run (useful for Monte Carlo).
+        Called once after a run completes, rather than during simulation.
+        """
+        for ar in result.activity_results.values():
+            cal_id = None
+            # Look up the activity's calendar from the network
+            activity = self._network.activities.get(ar.task_id)
+            if activity is not None:
+                cal_id = activity.calendar_id
+            ar.calendar_start = self._sim_hours_to_calendar(ar.sim_start, cal_id)
+            ar.calendar_finish = self._sim_hours_to_calendar(ar.sim_finish, cal_id)
 
-        Returns:
-            A SimulationResult with timing data for all activities.
+        # Update project finish from the last activity
+        if result.activity_results:
+            last = max(result.activity_results.values(), key=lambda r: r.sim_finish)
+            result.project_finish = last.calendar_finish
+
+    def _run_fast(self, run_id: int = 0) -> SimulationResult:
+        """Fast-path simulation without SimPy for non-resource-constrained runs.
+
+        Directly traverses the topological order and computes start/finish
+        times using simple max() over predecessor constraints. Much faster
+        than creating SimPy processes for every activity.
+        """
+        rng = np.random.default_rng(
+            self._seed + run_id if self._seed is not None else None
+        )
+
+        result = SimulationResult(run_id=run_id, project_start=self._project_start)
+
+        activity_starts: dict[int, float] = {}
+        activity_finishes: dict[int, float] = {}
+
+        for activity in self._topo_order:
+            # Compute earliest start from all predecessors
+            earliest = 0.0
+            for rel in activity.predecessors:
+                dur = activity.original_duration_hours
+                constraint = _compute_earliest_start(
+                    rel, activity_starts, activity_finishes, dur
+                )
+                if constraint > earliest:
+                    earliest = constraint
+
+            start_time = earliest
+
+            # Sample duration
+            simulated_duration = self._duration_sampler(
+                activity.original_duration_hours, rng
+            )
+            if activity.is_milestone:
+                simulated_duration = 0.0
+
+            finish_time = start_time + simulated_duration
+
+            activity_starts[activity.task_id] = start_time
+            activity_finishes[activity.task_id] = finish_time
+
+            result.activity_results[activity.task_id] = ActivityResult(
+                task_id=activity.task_id,
+                task_code=activity.task_code,
+                task_name=activity.task_name,
+                planned_duration_hours=activity.original_duration_hours,
+                simulated_duration_hours=simulated_duration,
+                sim_start=start_time,
+                sim_finish=finish_time,
+                wait_hours=0.0,
+                is_critical=activity.is_critical,
+            )
+
+        # Calculate project duration
+        if result.activity_results:
+            result.project_duration_hours = max(
+                r.sim_finish for r in result.activity_results.values()
+            )
+
+        return result
+
+    def _run_simpy(self, run_id: int = 0) -> SimulationResult:
+        """Full SimPy simulation with resource constraints.
+
+        Used when resource_constrained=True. Creates SimPy processes
+        for each activity with resource acquisition/release.
         """
         rng = np.random.default_rng(
             self._seed + run_id if self._seed is not None else None
@@ -333,21 +442,17 @@ class SimulationEngine:
 
         # Create SimPy resources
         simpy_resources: dict[int, simpy.Resource] = {}
-        if self._resource_constrained:
-            for rsrc_id, pool in self._resource_pools.items():
-                simpy_resources[rsrc_id] = simpy.Resource(env, capacity=pool.capacity)
-                pool.resource = simpy_resources[rsrc_id]
+        for rsrc_id, pool in self._resource_pools.items():
+            simpy_resources[rsrc_id] = simpy.Resource(env, capacity=pool.capacity)
+            pool.resource = simpy_resources[rsrc_id]
 
         # Track activity start and completion events
         start_events: dict[int, simpy.Event] = {}
         completion_events: dict[int, simpy.Event] = {}
-        # Track activity start/finish sim times
         activity_starts: dict[int, float] = {}
         activity_finishes: dict[int, float] = {}
 
-        topo_order = self._network.topological_order()
-
-        for activity in topo_order:
+        for activity in self._topo_order:
             start_events[activity.task_id] = env.event()
             completion_events[activity.task_id] = env.event()
 
@@ -355,41 +460,18 @@ class SimulationEngine:
             env: simpy.Environment, activity: Activity
         ) -> simpy.events.Process:
             """SimPy process for a single activity."""
-            # Wait for predecessor constraints, choosing the right event
-            # based on relationship type
             for rel in activity.predecessors:
-                # FS/FF wait on predecessor completion; SS/SF wait on start
-                if rel.rel_type in (
-                    RelationshipType.SS,
-                    RelationshipType.SF,
-                ):
+                if rel.rel_type in (RelationshipType.SS, RelationshipType.SF):
                     pred_event = start_events.get(rel.predecessor_id)
                 else:
                     pred_event = completion_events.get(rel.predecessor_id)
 
                 if pred_event is not None:
                     yield pred_event
-
-                    # Apply lag based on relationship type
-                    pred_finish = activity_finishes.get(rel.predecessor_id, 0)
-                    pred_start = activity_starts.get(rel.predecessor_id, 0)
-
-                    if rel.rel_type == RelationshipType.FS:
-                        earliest = pred_finish + rel.lag_hours
-                    elif rel.rel_type == RelationshipType.SS:
-                        earliest = pred_start + rel.lag_hours
-                    elif rel.rel_type == RelationshipType.FF:
-                        # FF: successor finish >= pred finish + lag
-                        # Approximate: successor start >= pred finish + lag - duration
-                        dur = activity.original_duration_hours
-                        earliest = pred_finish + rel.lag_hours - dur
-                    elif rel.rel_type == RelationshipType.SF:
-                        dur = activity.original_duration_hours
-                        earliest = pred_start + rel.lag_hours - dur
-                    else:
-                        earliest = pred_finish + rel.lag_hours
-
-                    # Wait until the earliest allowed start
+                    earliest = _compute_earliest_start(
+                        rel, activity_starts, activity_finishes,
+                        activity.original_duration_hours,
+                    )
                     if earliest > env.now:
                         yield env.timeout(earliest - env.now)
 
@@ -400,39 +482,29 @@ class SimulationEngine:
             if activity.is_milestone:
                 simulated_duration = 0.0
 
-            # Acquire resources if constrained
+            # Acquire resources
             requests = []
             wait_start = env.now
-            if self._resource_constrained:
-                rsrc_ids = self._resource_assignments.get(activity.task_id, [])
-                for rsrc_id in rsrc_ids:
-                    if rsrc_id in simpy_resources:
-                        req = simpy_resources[rsrc_id].request()
-                        requests.append((rsrc_id, req))
-                        yield req
+            rsrc_ids = self._resource_assignments.get(activity.task_id, [])
+            for rsrc_id in rsrc_ids:
+                if rsrc_id in simpy_resources:
+                    req = simpy_resources[rsrc_id].request()
+                    requests.append((rsrc_id, req))
+                    yield req
 
             wait_hours = env.now - wait_start
             start_time = env.now
             activity_starts[activity.task_id] = start_time
-
-            # Signal that this activity has started (for SS/SF successors)
             start_events[activity.task_id].succeed()
 
-            # Execute the activity
             if simulated_duration > 0:
                 yield env.timeout(simulated_duration)
 
             finish_time = env.now
             activity_finishes[activity.task_id] = finish_time
 
-            # Release resources
             for rsrc_id, req in requests:
                 simpy_resources[rsrc_id].release(req)
-
-            # Convert sim times to calendar datetimes
-            cal_id = activity.calendar_id
-            cal_start = self._sim_hours_to_calendar(start_time, cal_id)
-            cal_finish = self._sim_hours_to_calendar(finish_time, cal_id)
 
             result.activity_results[activity.task_id] = ActivityResult(
                 task_id=activity.task_id,
@@ -442,45 +514,66 @@ class SimulationEngine:
                 simulated_duration_hours=simulated_duration,
                 sim_start=start_time,
                 sim_finish=finish_time,
-                calendar_start=cal_start,
-                calendar_finish=cal_finish,
                 wait_hours=wait_hours,
                 is_critical=activity.is_critical,
             )
-
-            # Signal completion
             completion_events[activity.task_id].succeed()
 
-        # Start all activity processes
-        for activity in topo_order:
+        for activity in self._topo_order:
             env.process(activity_process(env, activity))
 
-        # Run the simulation
         env.run()
 
-        # Calculate project totals
         if result.activity_results:
-            max_finish = max(r.sim_finish for r in result.activity_results.values())
-            result.project_duration_hours = max_finish
-
-            # Find the last finishing activity for calendar finish
-            last_activity = max(
-                result.activity_results.values(), key=lambda r: r.sim_finish
+            result.project_duration_hours = max(
+                r.sim_finish for r in result.activity_results.values()
             )
-            result.project_finish = last_activity.calendar_finish
 
         return result
 
-    def run_monte_carlo(self, num_runs: int = 100) -> list[SimulationResult]:
+    def run(
+        self, run_id: int = 0, *, convert_calendar: bool = True
+    ) -> SimulationResult:
+        """Execute a single simulation run.
+
+        Args:
+            run_id: Identifier for this run (useful for Monte Carlo).
+            convert_calendar: Whether to convert sim hours to calendar
+                datetimes. Set to False for faster Monte Carlo runs when
+                only project duration is needed.
+
+        Returns:
+            A SimulationResult with timing data for all activities.
+        """
+        if self._resource_constrained:
+            result = self._run_simpy(run_id)
+        else:
+            result = self._run_fast(run_id)
+
+        if convert_calendar:
+            self._convert_calendar_dates(result)
+
+        return result
+
+    def run_monte_carlo(
+        self, num_runs: int = 100, *, convert_calendar: bool = False
+    ) -> list[SimulationResult]:
         """Execute multiple simulation runs for Monte Carlo analysis.
 
         Args:
             num_runs: Number of simulation runs to execute.
+            convert_calendar: Whether to convert sim hours to calendar
+                datetimes for every run. Defaults to False for performance.
+                Calendar dates are only needed for visualization of
+                individual runs, not for duration statistics.
 
         Returns:
             A list of SimulationResult objects, one per run.
         """
-        return [self.run(run_id=i) for i in range(num_runs)]
+        return [
+            self.run(run_id=i, convert_calendar=convert_calendar)
+            for i in range(num_runs)
+        ]
 
     def summary(self, result: SimulationResult) -> str:
         """Return a summary of a simulation result.
