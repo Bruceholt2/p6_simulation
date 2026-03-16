@@ -1,9 +1,11 @@
 """Run the P6 schedule discrete event simulation.
 
 Usage:
-    python run_simulation.py [path_to_xer_file]
+    python run_simulation.py [data_directory]
 
-If no file is specified, defaults to data/sample-5272.xer.
+Loads all XER files from the data directory, merges them into a
+portfolio, and runs the simulation pipeline on the combined schedule.
+If no directory is specified, defaults to data/.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from src.xer_parser import XERParser
+from src.portfolio_loader import PortfolioLoader
 from src.activity_network import ActivityNetwork
 from src.calendar_engine import CalendarEngine
 from src.simulation_engine import SimulationEngine, triangular_sampler
@@ -49,24 +51,24 @@ def save_results_csv(result: "SimulationResult", filepath: Path) -> None:
     df.to_csv(filepath, index=False)
 
 
-def main(xer_path: str = "data/sample-5272.xer") -> None:
-    """Run the full simulation pipeline."""
+def main(data_dir: str = "data") -> None:
+    """Run the full simulation pipeline on a portfolio of XER files."""
     results_dir = Path("results")
     results_dir.mkdir(exist_ok=True)
 
-    # --- 1. Parse the XER file ---
+    # --- 1. Load portfolio ---
     print("=" * 60)
-    print("STEP 1: Parsing XER file")
+    print("STEP 1: Loading XER portfolio")
     print("=" * 60)
-    parser = XERParser(xer_path)
-    parser.summary()
+    portfolio = PortfolioLoader(data_dir)
+    portfolio.summary()
 
     # --- 2. Build the activity network ---
     print()
     print("=" * 60)
     print("STEP 2: Building activity network")
     print("=" * 60)
-    network = ActivityNetwork(parser)
+    network = ActivityNetwork(portfolio)
     network.summary()
 
     # --- 3. Load calendars ---
@@ -74,7 +76,7 @@ def main(xer_path: str = "data/sample-5272.xer") -> None:
     print("=" * 60)
     print("STEP 3: Loading calendars")
     print("=" * 60)
-    calendar = CalendarEngine(parser)
+    calendar = CalendarEngine(portfolio)
     calendar.summary()
 
     # --- 4. Deterministic simulation (single run) ---
@@ -82,7 +84,7 @@ def main(xer_path: str = "data/sample-5272.xer") -> None:
     print("=" * 60)
     print("STEP 4: Deterministic simulation (single run)")
     print("=" * 60)
-    engine = SimulationEngine(parser, resource_constrained=False)
+    engine = SimulationEngine(portfolio, resource_constrained=False)
     result = engine.run()
     engine.summary(result)
 
@@ -105,7 +107,7 @@ def main(xer_path: str = "data/sample-5272.xer") -> None:
     print(f"STEP 5: Monte Carlo simulation ({num_runs} runs)")
     print("=" * 60)
     mc_engine = SimulationEngine(
-        parser,
+        portfolio,
         duration_sampler=triangular_sampler(0.8, 1.0, 1.5),
         seed=42,
         resource_constrained=False,
@@ -126,7 +128,7 @@ def main(xer_path: str = "data/sample-5272.xer") -> None:
     print("=" * 60)
     print("STEP 6: Resource-constrained simulation (single run)")
     print("=" * 60)
-    rc_engine = SimulationEngine(parser, resource_constrained=True)
+    rc_engine = SimulationEngine(portfolio, resource_constrained=True)
     rc_result = rc_engine.run()
     rc_engine.summary(rc_result)
 
@@ -152,5 +154,5 @@ def main(xer_path: str = "data/sample-5272.xer") -> None:
 
 
 if __name__ == "__main__":
-    xer_file = sys.argv[1] if len(sys.argv) > 1 else "data/sample-5272.xer"
-    main(xer_file)
+    data_directory = sys.argv[1] if len(sys.argv) > 1 else "data"
+    main(data_directory)
