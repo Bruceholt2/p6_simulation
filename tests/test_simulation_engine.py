@@ -179,18 +179,18 @@ class TestDeterministicLinearChain:
 
     def test_activity_a_starts_at_zero(self, result: SimulationResult) -> None:
         a = result.activity_results[1]
-        assert a.sim_start == pytest.approx(0.0)
-        assert a.sim_finish == pytest.approx(16.0)
+        assert a.sim_start_time == pytest.approx(0.0)
+        assert a.sim_finish_time == pytest.approx(16.0)
 
     def test_activity_b_starts_after_a(self, result: SimulationResult) -> None:
         b = result.activity_results[2]
-        assert b.sim_start == pytest.approx(16.0)
-        assert b.sim_finish == pytest.approx(40.0)
+        assert b.sim_start_time == pytest.approx(16.0)
+        assert b.sim_finish_time == pytest.approx(40.0)
 
     def test_activity_c_starts_after_b(self, result: SimulationResult) -> None:
         c = result.activity_results[3]
-        assert c.sim_start == pytest.approx(40.0)
-        assert c.sim_finish == pytest.approx(48.0)
+        assert c.sim_start_time == pytest.approx(40.0)
+        assert c.sim_finish_time == pytest.approx(48.0)
 
     def test_no_wait_hours(self, result: SimulationResult) -> None:
         for r in result.activity_results.values():
@@ -200,7 +200,7 @@ class TestDeterministicLinearChain:
         df = result.to_dataframe()
         assert len(df) == 3
         assert "task_code" in df.columns
-        assert "sim_start" in df.columns
+        assert "sim_start_time" in df.columns
 
 
 class TestParallelPaths:
@@ -223,12 +223,12 @@ class TestParallelPaths:
     def test_parallel_activities_start_together(self, result: SimulationResult) -> None:
         b = result.activity_results[2]
         c = result.activity_results[3]
-        assert b.sim_start == pytest.approx(0.0)
-        assert c.sim_start == pytest.approx(0.0)
+        assert b.sim_start_time == pytest.approx(0.0)
+        assert c.sim_start_time == pytest.approx(0.0)
 
     def test_end_milestone_at_24(self, result: SimulationResult) -> None:
         end = result.activity_results[4]
-        assert end.sim_start == pytest.approx(24.0)
+        assert end.sim_start_time == pytest.approx(24.0)
         assert end.simulated_duration_hours == pytest.approx(0.0)
 
 
@@ -254,7 +254,7 @@ class TestResourceContention:
         b = result.activity_results[2]
         c = result.activity_results[3]
         # One starts at 0, the other at 8 (order depends on topo sort)
-        starts = sorted([b.sim_start, c.sim_start])
+        starts = sorted([b.sim_start_time, c.sim_start_time])
         assert starts[0] == pytest.approx(0.0)
         assert starts[1] == pytest.approx(8.0)
 
@@ -294,7 +294,7 @@ class TestMilestones:
     def test_start_milestone_zero_duration(self, result: SimulationResult) -> None:
         start = result.activity_results[1]
         assert start.simulated_duration_hours == pytest.approx(0.0)
-        assert start.sim_start == start.sim_finish
+        assert start.sim_start_time == start.sim_finish_time
 
     def test_end_milestone_zero_duration(self, result: SimulationResult) -> None:
         end = result.activity_results[4]
@@ -325,7 +325,7 @@ class TestLag:
     def test_lag_delays_successor(self, result: SimulationResult) -> None:
         b = result.activity_results[2]
         # A finishes at 8h, lag=16h, so B starts at 8+16=24h
-        assert b.sim_start == pytest.approx(24.0)
+        assert b.sim_start_time == pytest.approx(24.0)
 
     def test_total_duration_with_lag(self, result: SimulationResult) -> None:
         # A=8h + lag=16h + B=8h = 32h
@@ -357,7 +357,7 @@ class TestSSRelationship:
     def test_ss_successor_starts_after_lag(self, result: SimulationResult) -> None:
         b = result.activity_results[2]
         # A starts at 0, SS lag=4, so B starts at 0+4=4
-        assert b.sim_start == pytest.approx(4.0)
+        assert b.sim_start_time == pytest.approx(4.0)
 
     def test_ss_project_duration(self, result: SimulationResult) -> None:
         # A: 0-16, B: 4-12. Max finish = 16
@@ -379,7 +379,7 @@ class TestCalendarIntegration:
 
     def test_first_activity_calendar_start(self, result: SimulationResult) -> None:
         a = result.activity_results[1]
-        assert a.calendar_start == datetime(2025, 7, 7, 8, 0)
+        assert a.sim_start_date == datetime(2025, 7, 7, 8, 0)
 
     def test_project_start_set(self, result: SimulationResult) -> None:
         assert result.project_start == datetime(2025, 7, 7, 8, 0)

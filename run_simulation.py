@@ -24,6 +24,30 @@ from src.visualization import (
 )
 
 
+def save_results_csv(result: "SimulationResult", filepath: Path) -> None:
+    """Export simulation results to CSV with datetime and hour columns."""
+    df = result.to_dataframe()
+
+    # Reorder columns for readability
+    col_order = [
+        "task_id",
+        "task_code",
+        "task_name",
+        "planned_duration_hours",
+        "simulated_duration_hours",
+        "sim_start_date",
+        "sim_finish_date",
+        "sim_start_time",
+        "sim_finish_time",
+        "wait_hours",
+        "is_critical",
+    ]
+    col_order = [c for c in col_order if c in df.columns]
+    df = df[col_order]
+
+    df.to_csv(filepath, index=False)
+
+
 def main(xer_path: str = "data/sample-5272.xer") -> None:
     """Run the full simulation pipeline."""
     results_dir = Path("results")
@@ -61,9 +85,13 @@ def main(xer_path: str = "data/sample-5272.xer") -> None:
     result = engine.run()
     engine.summary(result)
 
+    # Save CSV
+    save_results_csv(result, results_dir / "deterministic_results.csv")
+    print(f"\n  Saved: {results_dir / 'deterministic_results.csv'}")
+
     # Save Gantt chart
     gantt_chart(result, top_n=40, save_path=results_dir / "gantt_deterministic.png")
-    print(f"\n  Saved: {results_dir / 'gantt_deterministic.png'}")
+    print(f"  Saved: {results_dir / 'gantt_deterministic.png'}")
 
     # Save S-curve
     s_curve(result, save_path=results_dir / "scurve_deterministic.png")
@@ -101,12 +129,16 @@ def main(xer_path: str = "data/sample-5272.xer") -> None:
     rc_result = rc_engine.run()
     rc_engine.summary(rc_result)
 
+    # Save CSV
+    save_results_csv(rc_result, results_dir / "resource_constrained_results.csv")
+    print(f"\n  Saved: {results_dir / 'resource_constrained_results.csv'}")
+
     gantt_chart(
         rc_result, top_n=40,
         title="Resource-Constrained Gantt Chart",
         save_path=results_dir / "gantt_resource_constrained.png",
     )
-    print(f"\n  Saved: {results_dir / 'gantt_resource_constrained.png'}")
+    print(f"  Saved: {results_dir / 'gantt_resource_constrained.png'}")
 
     # --- Done ---
     print()
@@ -114,7 +146,7 @@ def main(xer_path: str = "data/sample-5272.xer") -> None:
     print("COMPLETE — All outputs saved to results/")
     print("=" * 60)
     print()
-    for f in sorted(results_dir.glob("*.png")):
+    for f in sorted(results_dir.glob("*.png")) + sorted(results_dir.glob("*.csv")):
         print(f"  {f}")
 
 

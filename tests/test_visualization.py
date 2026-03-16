@@ -336,7 +336,7 @@ class TestResourceUtilization:
         empty.activity_results[1] = ActivityResult(
             task_id=1, task_code="A", task_name="Test",
             planned_duration_hours=8, simulated_duration_hours=8,
-            sim_start=0, sim_finish=8,
+            sim_start_time=0, sim_finish_time=8,
         )
         fig = resource_utilization(
             empty,

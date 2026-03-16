@@ -61,10 +61,10 @@ class ActivityResult:
         task_name: Activity description.
         planned_duration_hours: Original planned duration.
         simulated_duration_hours: Duration used in this simulation run.
-        sim_start: Simulation start time (hours from sim epoch).
-        sim_finish: Simulation finish time (hours from sim epoch).
-        calendar_start: Calendar datetime when activity started.
-        calendar_finish: Calendar datetime when activity finished.
+        sim_start_time: Simulation start time (int hours from sim epoch).
+        sim_finish_time: Simulation finish time (int hours from sim epoch).
+        sim_start_date: Calendar datetime when activity started.
+        sim_finish_date: Calendar datetime when activity finished.
         wait_hours: Hours spent waiting for resources.
         is_critical: Whether the activity was on the critical path.
     """
@@ -74,10 +74,10 @@ class ActivityResult:
     task_name: str
     planned_duration_hours: float
     simulated_duration_hours: float
-    sim_start: float
-    sim_finish: float
-    calendar_start: datetime | None = None
-    calendar_finish: datetime | None = None
+    sim_start_time: int
+    sim_finish_time: int
+    sim_start_date: datetime | None = None
+    sim_finish_date: datetime | None = None
     wait_hours: float = 0.0
     is_critical: bool = False
 
@@ -115,10 +115,10 @@ class SimulationResult:
                 "task_name": r.task_name,
                 "planned_duration_hours": r.planned_duration_hours,
                 "simulated_duration_hours": r.simulated_duration_hours,
-                "sim_start": r.sim_start,
-                "sim_finish": r.sim_finish,
-                "calendar_start": r.calendar_start,
-                "calendar_finish": r.calendar_finish,
+                "sim_start_date": r.sim_start_date,
+                "sim_finish_date": r.sim_finish_date,
+                "sim_start_time": r.sim_start_time,
+                "sim_finish_time": r.sim_finish_time,
                 "wait_hours": r.wait_hours,
                 "is_critical": r.is_critical,
             })
@@ -358,13 +358,13 @@ class SimulationEngine:
             activity = self._network.activities.get(ar.task_id)
             if activity is not None:
                 cal_id = activity.calendar_id
-            ar.calendar_start = self._sim_hours_to_calendar(ar.sim_start, cal_id)
-            ar.calendar_finish = self._sim_hours_to_calendar(ar.sim_finish, cal_id)
+            ar.sim_start_date = self._sim_hours_to_calendar(ar.sim_start_time, cal_id)
+            ar.sim_finish_date = self._sim_hours_to_calendar(ar.sim_finish_time, cal_id)
 
         # Update project finish from the last activity
         if result.activity_results:
-            last = max(result.activity_results.values(), key=lambda r: r.sim_finish)
-            result.project_finish = last.calendar_finish
+            last = max(result.activity_results.values(), key=lambda r: r.sim_finish_time)
+            result.project_finish = last.sim_finish_date
 
     def _run_fast(self, run_id: int = 0) -> SimulationResult:
         """Fast-path simulation without SimPy for non-resource-constrained runs.
@@ -413,8 +413,8 @@ class SimulationEngine:
                 task_name=activity.task_name,
                 planned_duration_hours=activity.remaining_duration_hours,
                 simulated_duration_hours=simulated_duration,
-                sim_start=start_time,
-                sim_finish=finish_time,
+                sim_start_time=int(start_time),
+                sim_finish_time=int(finish_time),
                 wait_hours=0.0,
                 is_critical=activity.is_critical,
             )
@@ -422,7 +422,7 @@ class SimulationEngine:
         # Calculate project duration
         if result.activity_results:
             result.project_duration_hours = max(
-                r.sim_finish for r in result.activity_results.values()
+                r.sim_finish_time for r in result.activity_results.values()
             )
 
         return result
@@ -512,8 +512,8 @@ class SimulationEngine:
                 task_name=activity.task_name,
                 planned_duration_hours=activity.remaining_duration_hours,
                 simulated_duration_hours=simulated_duration,
-                sim_start=start_time,
-                sim_finish=finish_time,
+                sim_start_time=int(start_time),
+                sim_finish_time=int(finish_time),
                 wait_hours=wait_hours,
                 is_critical=activity.is_critical,
             )
@@ -526,7 +526,7 @@ class SimulationEngine:
 
         if result.activity_results:
             result.project_duration_hours = max(
-                r.sim_finish for r in result.activity_results.values()
+                r.sim_finish_time for r in result.activity_results.values()
             )
 
         return result

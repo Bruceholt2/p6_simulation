@@ -58,12 +58,12 @@ def gantt_chart(
         return fig
 
     # Sort by start time, then by duration (longest first for visibility)
-    df = df.sort_values("sim_start", ascending=True)
+    df = df.sort_values("sim_start_time", ascending=True)
 
     # Limit to top_n longest activities
     if top_n is not None and len(df) > top_n:
         df = df.nlargest(top_n, "simulated_duration_hours")
-        df = df.sort_values("sim_start", ascending=True)
+        df = df.sort_values("sim_start_time", ascending=True)
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -74,12 +74,12 @@ def gantt_chart(
             label = label[:37] + "..."
         y_labels.append(label)
 
-        if use_calendar_dates and row["calendar_start"] is not None:
-            start = mdates.date2num(row["calendar_start"])
-            finish = mdates.date2num(row["calendar_finish"])
+        if use_calendar_dates and row["sim_start_date"] is not None:
+            start = mdates.date2num(row["sim_start_date"])
+            finish = mdates.date2num(row["sim_finish_date"])
             width = finish - start
         else:
-            start = row["sim_start"]
+            start = row["sim_start_time"]
             width = row["simulated_duration_hours"]
 
         color = "#e74c3c" if (show_critical and row["is_critical"]) else "#3498db"
@@ -212,7 +212,7 @@ def s_curve(
         plt.close(fig)
         return fig
 
-    max_time = df["sim_finish"].max()
+    max_time = df["sim_finish_time"].max()
     if max_time <= 0:
         max_time = 1.0
 
@@ -220,8 +220,8 @@ def s_curve(
     cumulative_hours = np.zeros(num_points)
 
     for _, row in df.iterrows():
-        start = row["sim_start"]
-        finish = row["sim_finish"]
+        start = row["sim_start_time"]
+        finish = row["sim_finish_time"]
         duration = row["simulated_duration_hours"]
         if duration <= 0:
             continue
@@ -291,7 +291,7 @@ def resource_utilization(
         plt.close(fig)
         return fig
 
-    max_time = df["sim_finish"].max()
+    max_time = df["sim_finish_time"].max()
     if max_time <= 0:
         max_time = 1.0
 
@@ -317,8 +317,8 @@ def resource_utilization(
 
     for _, row in df.iterrows():
         task_id = row["task_id"]
-        start = row["sim_start"]
-        finish = row["sim_finish"]
+        start = row["sim_start_time"]
+        finish = row["sim_finish_time"]
         if finish <= start:
             continue
         assigned = resource_assignments.get(task_id, [])
